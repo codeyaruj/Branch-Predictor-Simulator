@@ -18,6 +18,11 @@ memory, so trace size is not limited by available RAM.
 The implementation uses only the C++17 standard library. There are no runtime or
 test-framework dependencies.
 
+> **Scope:** This simulator is educational and models simplified branch
+> predictors. It does not attempt cycle-accurate or implementation-specific CPU
+> behavior. Table-based predictors currently index with the raw lower PC bits;
+> known instruction-alignment bits are not discarded.
+
 ## 2. Why branch prediction matters
 
 Modern processors overlap the execution of many instructions. A conditional
