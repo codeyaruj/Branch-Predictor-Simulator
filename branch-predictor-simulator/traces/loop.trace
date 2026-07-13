@@ -1,0 +1,9 @@
+# A loop-closing branch: seven continuing iterations, then one exit.
+0x00403010 T
+0x00403010 T
+0x00403010 T
+0x00403010 T
+0x00403010 T
+0x00403010 T
+0x00403010 T
+0x00403010 N
