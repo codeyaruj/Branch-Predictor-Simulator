@@ -1,37 +1,23 @@
-CXX ?= c++
-CPPFLAGS += -Iinclude
-CXXFLAGS += -std=c++17 -O2 -Wall -Wextra -Wpedantic -Wconversion -Wshadow
+CXX = g++
+CXXFLAGS = -std=c++17 -Wall -Wextra -Wpedantic
+INCLUDES = -Iinclude
 
-BUILD_DIR := build/make
-CORE_SOURCES := src/predictors.cpp src/simulator.cpp src/statistics.cpp src/trace_parser.cpp
-CORE_OBJECTS := $(patsubst %.cpp,$(BUILD_DIR)/%.o,$(CORE_SOURCES))
-MAIN_OBJECT := $(BUILD_DIR)/src/main.o
-TEST_NAMES := predictors trace_parser simulator cli
-TEST_OBJECTS := $(addprefix $(BUILD_DIR)/tests/test_,$(addsuffix .o,$(TEST_NAMES)))
-TEST_BINARIES := $(addprefix $(BUILD_DIR)/test_,$(TEST_NAMES))
-DEPENDENCIES := $(CORE_OBJECTS:.o=.d) $(MAIN_OBJECT:.o=.d) $(TEST_OBJECTS:.o=.d)
+SOURCES = src/main.cpp src/predictor.cpp src/trace.cpp
+TEST_SOURCES = tests/tests.cpp src/predictor.cpp src/trace.cpp
+HEADERS = include/predictor.h include/trace.h
 
 .PHONY: all test clean
 
 all: branchsim
 
-branchsim: $(CORE_OBJECTS) $(MAIN_OBJECT)
-	$(CXX) $(CXXFLAGS) $^ -o $@
+branchsim: $(SOURCES) $(HEADERS)
+	$(CXX) $(CXXFLAGS) $(INCLUDES) $(SOURCES) -o branchsim
 
-$(BUILD_DIR)/test_%: $(BUILD_DIR)/tests/test_%.o $(CORE_OBJECTS)
-	$(CXX) $(CXXFLAGS) $^ -o $@
+tests_runner: $(TEST_SOURCES) $(HEADERS)
+	$(CXX) $(CXXFLAGS) $(INCLUDES) $(TEST_SOURCES) -o tests_runner
 
-$(BUILD_DIR)/%.o: %.cpp
-	@mkdir -p $(@D)
-	$(CXX) $(CPPFLAGS) $(CXXFLAGS) -MMD -MP -c $< -o $@
-
-test: branchsim $(TEST_BINARIES)
-	$(BUILD_DIR)/test_predictors
-	$(BUILD_DIR)/test_trace_parser
-	$(BUILD_DIR)/test_simulator
-	$(BUILD_DIR)/test_cli ./branchsim .
+test: tests_runner
+	./tests_runner
 
 clean:
-	rm -rf $(BUILD_DIR) branchsim
-
--include $(DEPENDENCIES)
+	rm -f branchsim tests_runner

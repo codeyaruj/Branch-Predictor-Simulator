@@ -1,4 +1,5 @@
 /branchsim
 /build/
-/*.csv
+/tests_runner
+/tests/test_input.tmp
 .DS_Store
