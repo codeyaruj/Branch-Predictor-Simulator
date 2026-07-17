@@ -18,7 +18,7 @@ std::string format_pc(std::uint64_t pc) {
 std::string format_history(std::uint64_t history, unsigned bit_count) {
     std::string bits(bit_count, '0');
     for (unsigned bit = 0U; bit < bit_count; ++bit) {
-        const auto shift = bit_count - bit - 1U;
+        const unsigned shift = bit_count - bit - 1U;
         if (((history >> shift) & 1U) != 0U) {
             bits[bit] = '1';
         }
@@ -30,10 +30,25 @@ void write_verbose_line(std::ostream& output, const TraceRecord& branch,
                         const Prediction& prediction,
                         const UpdateResult& update,
                         std::optional<unsigned> history_bits) {
+    char actual = 'N';
+    if (branch.taken) {
+        actual = 'T';
+    }
+
+    char predicted = 'N';
+    if (prediction.taken) {
+        predicted = 'T';
+    }
+
+    const char* result = "MISS";
+    if (prediction.taken == branch.taken) {
+        result = "HIT";
+    }
+
     output << "PC=" << format_pc(branch.pc)
-           << " actual=" << (branch.taken ? 'T' : 'N')
-           << " predicted=" << (prediction.taken ? 'T' : 'N')
-           << " result=" << (prediction.taken == branch.taken ? "HIT" : "MISS");
+           << " actual=" << actual
+           << " predicted=" << predicted
+           << " result=" << result;
 
     if (prediction.index.has_value()) {
         output << " index=" << *prediction.index;
@@ -63,7 +78,8 @@ Simulator::Simulator(std::unique_ptr<BranchPredictor> predictor)
 SimulationResult Simulator::run(const TraceParser& trace,
                                 std::ostream* verbose_output) {
     Statistics statistics;
-    const auto configured_history_bits = predictor_->history_bits();
+    const std::optional<unsigned> configured_history_bits =
+        predictor_->history_bits();
 
     trace.for_each([&](const TraceRecord& branch) {
         const Prediction prediction = predictor_->predict(branch.pc);
@@ -76,13 +92,20 @@ SimulationResult Simulator::run(const TraceParser& trace,
         }
     });
 
-    const auto entries = predictor_->table_entries();
-    const std::size_t memory_bits =
-        entries.has_value() ? *entries * predictor_->bits_per_entry() : 0U;
+    const std::optional<std::size_t> entries = predictor_->table_entries();
+    std::size_t memory_bits = 0U;
+    if (entries.has_value()) {
+        memory_bits = *entries * predictor_->bits_per_entry();
+    }
 
-    return SimulationResult{predictor_->name(), statistics, entries, memory_bits,
-                            configured_history_bits,
-                            predictor_->global_history()};
+    SimulationResult result;
+    result.predictor = predictor_->name();
+    result.statistics = statistics;
+    result.table_entries = entries;
+    result.table_memory_bits = memory_bits;
+    result.history_bits = configured_history_bits;
+    result.final_history = predictor_->global_history();
+    return result;
 }
 
 }  // namespace branchsim

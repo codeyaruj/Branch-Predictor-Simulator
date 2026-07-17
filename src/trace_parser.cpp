@@ -4,27 +4,23 @@
 #include <cctype>
 #include <filesystem>
 #include <fstream>
+#include <sstream>
 #include <stdexcept>
 #include <string>
-#include <string_view>
 #include <system_error>
 #include <utility>
 
 namespace branchsim {
 namespace {
 
-[[nodiscard]] bool is_whitespace(char character) noexcept {
-    return std::isspace(static_cast<unsigned char>(character)) != 0;
-}
-
-[[nodiscard]] std::string_view trim(std::string_view text) noexcept {
-    while (!text.empty() && is_whitespace(text.front())) {
-        text.remove_prefix(1U);
+bool is_blank_or_comment(const std::string& line) {
+    for (char character : line) {
+        const unsigned char value = static_cast<unsigned char>(character);
+        if (std::isspace(value) == 0) {
+            return character == '#';
+        }
     }
-    while (!text.empty() && is_whitespace(text.back())) {
-        text.remove_suffix(1U);
-    }
-    return text;
+    return true;
 }
 
 [[noreturn]] void throw_malformed(const std::string& path,
@@ -35,46 +31,39 @@ namespace {
                              "'0x<hex-address> N'");
 }
 
-[[nodiscard]] TraceRecord parse_record(std::string_view line,
-                                       const std::string& path,
-                                       std::uint64_t line_number) {
-    std::size_t position = 0U;
-    while (position < line.size() && !is_whitespace(line[position])) {
-        ++position;
+TraceRecord parse_record(const std::string& line, const std::string& path,
+                         std::uint64_t line_number) {
+    std::istringstream input(line);
+    std::string address;
+    std::string outcome;
+    std::string extra;
+
+    if (!(input >> address >> outcome)) {
+        throw_malformed(path, line_number);
+    }
+    if (input >> extra) {
+        throw_malformed(path, line_number);
     }
 
-    const std::string_view address_token = line.substr(0U, position);
-    while (position < line.size() && is_whitespace(line[position])) {
-        ++position;
+    if (address.size() <= 2U || address[0] != '0' || address[1] != 'x') {
+        throw_malformed(path, line_number);
     }
-
-    const std::size_t outcome_begin = position;
-    while (position < line.size() && !is_whitespace(line[position])) {
-        ++position;
-    }
-    const std::string_view outcome_token =
-        line.substr(outcome_begin, position - outcome_begin);
-
-    while (position < line.size() && is_whitespace(line[position])) {
-        ++position;
-    }
-
-    if (position != line.size() || address_token.size() <= 2U ||
-        address_token[0] != '0' || address_token[1] != 'x' ||
-        outcome_token.size() != 1U ||
-        (outcome_token[0] != 'T' && outcome_token[0] != 'N')) {
+    if (outcome != "T" && outcome != "N") {
         throw_malformed(path, line_number);
     }
 
     std::uint64_t pc = 0U;
-    const char* const digits_begin = address_token.data() + 2;
-    const char* const digits_end = address_token.data() + address_token.size();
+    const char* digits_begin = address.data() + 2;
+    const char* digits_end = address.data() + address.size();
     const auto conversion = std::from_chars(digits_begin, digits_end, pc, 16);
     if (conversion.ec != std::errc{} || conversion.ptr != digits_end) {
         throw_malformed(path, line_number);
     }
 
-    return TraceRecord{pc, outcome_token[0] == 'T'};
+    TraceRecord record;
+    record.pc = pc;
+    record.taken = outcome == "T";
+    return record;
 }
 
 }  // namespace
@@ -107,12 +96,11 @@ void TraceParser::for_each(
     std::uint64_t line_number = 0U;
     while (std::getline(input, line)) {
         ++line_number;
-        const std::string_view content = trim(line);
-        if (content.empty() || content.front() == '#') {
+        if (is_blank_or_comment(line)) {
             continue;
         }
 
-        const TraceRecord record = parse_record(content, path_, line_number);
+        const TraceRecord record = parse_record(line, path_, line_number);
         callback(record);
     }
 

@@ -2,7 +2,6 @@
 #include "simulator.hpp"
 #include "trace_parser.hpp"
 
-#include <array>
 #include <charconv>
 #include <cstdint>
 #include <filesystem>
@@ -10,10 +9,8 @@
 #include <iomanip>
 #include <iostream>
 #include <memory>
-#include <optional>
 #include <stdexcept>
 #include <string>
-#include <string_view>
 #include <system_error>
 #include <vector>
 
@@ -49,42 +46,38 @@ struct Options {
     unsigned table_bits{kDefaultTableBits};
     unsigned history_bits{kDefaultHistoryBits};
     InitialState initial_state{InitialState::default_state};
-    std::optional<std::string> csv_path;
+    std::string csv_path;
     bool compare{false};
     bool verbose{false};
+    bool csv_requested{false};
     bool predictor_explicit{false};
     bool table_bits_explicit{false};
     bool history_bits_explicit{false};
     bool initial_state_explicit{false};
 };
 
-[[noreturn]] void option_error(const std::string& message) {
-    throw std::invalid_argument(message);
-}
-
 void print_help(std::ostream& output) {
-    output
-        << "Branch Predictor Simulator\n\n"
-        << "Usage:\n"
-        << "  branchsim <trace-file> [options]\n\n"
-        << "Options:\n"
-        << "  --predictor <name>       always-taken, always-not-taken, one-bit,\n"
-        << "                           two-bit (default), or gshare\n"
-        << "  --table-bits <N>         Table index bits, 0-24 (default: 10)\n"
-        << "  --history-bits <N>       GShare history bits, 1-63 (default: 8)\n"
-        << "  --initial-state <state>  taken, not-taken, strongly-taken,\n"
-        << "                           weakly-taken, weakly-not-taken, or\n"
-        << "                           strongly-not-taken\n"
-        << "  --compare                Run all five predictors\n"
-        << "  --csv <path>             Write result rows to a CSV file\n"
-        << "  --verbose                Print one line for every branch\n"
-        << "  --help                   Show this help text\n\n"
-        << "Examples:\n"
-        << "  branchsim trace.txt --predictor gshare --history-bits 8 --table-bits 10\n"
-        << "  branchsim trace.txt --compare --csv results.csv\n";
+    output << "Branch Predictor Simulator\n\n";
+    output << "Usage:\n";
+    output << "  branchsim <trace-file> [options]\n\n";
+    output << "Options:\n";
+    output << "  --predictor <name>       always-taken, always-not-taken, one-bit,\n";
+    output << "                           two-bit (default), or gshare\n";
+    output << "  --table-bits <N>         Table index bits, 0-24 (default: 10)\n";
+    output << "  --history-bits <N>       GShare history bits, 1-63 (default: 8)\n";
+    output << "  --initial-state <state>  taken, not-taken, strongly-taken,\n";
+    output << "                           weakly-taken, weakly-not-taken, or\n";
+    output << "                           strongly-not-taken\n";
+    output << "  --compare                Run all five predictors\n";
+    output << "  --csv <path>             Write result rows to a CSV file\n";
+    output << "  --verbose                Print one line for every branch\n";
+    output << "  --help                   Show this help text\n\n";
+    output << "Examples:\n";
+    output << "  branchsim trace.txt --predictor gshare --history-bits 8 --table-bits 10\n";
+    output << "  branchsim trace.txt --compare --csv results.csv\n";
 }
 
-PredictorKind parse_predictor(std::string_view value) {
+PredictorKind parse_predictor(const std::string& value) {
     if (value == "always-taken") {
         return PredictorKind::always_taken;
     }
@@ -100,10 +93,10 @@ PredictorKind parse_predictor(std::string_view value) {
     if (value == "gshare") {
         return PredictorKind::gshare;
     }
-    option_error("invalid predictor '" + std::string(value) + "'");
+    throw std::invalid_argument("invalid predictor '" + value + "'");
 }
 
-InitialState parse_initial_state(std::string_view value) {
+InitialState parse_initial_state(const std::string& value) {
     if (value == "taken") {
         return InitialState::taken;
     }
@@ -122,140 +115,166 @@ InitialState parse_initial_state(std::string_view value) {
     if (value == "strongly-not-taken") {
         return InitialState::strongly_not_taken;
     }
-    option_error("invalid initial state '" + std::string(value) + "'");
+    throw std::invalid_argument("invalid initial state '" + value + "'");
 }
 
-unsigned parse_unsigned(std::string_view text, std::string_view option) {
+unsigned parse_unsigned(const std::string& text, const std::string& option) {
     unsigned value = 0U;
     const auto result =
         std::from_chars(text.data(), text.data() + text.size(), value, 10);
     if (text.empty() || result.ec != std::errc{} ||
         result.ptr != text.data() + text.size()) {
-        option_error(std::string(option) + " requires a non-negative integer");
+        throw std::invalid_argument(option +
+                                    " requires a non-negative integer");
     }
     return value;
 }
 
-std::string_view require_value(int& index, int argc, char* argv[],
-                               std::string_view option) {
+std::string require_value(int& index, int argc, char* argv[],
+                          const std::string& option) {
     if (index + 1 >= argc) {
-        option_error(std::string(option) + " requires a value");
+        throw std::invalid_argument(option + " requires a value");
     }
-    const std::string_view value(argv[index + 1]);
+
+    const std::string value = argv[index + 1];
     if (value.rfind("--", 0U) == 0U) {
-        option_error(std::string(option) + " requires a value");
+        throw std::invalid_argument(option + " requires a value");
     }
+
     ++index;
     return value;
 }
 
 Options parse_options(int argc, char* argv[]) {
     Options options;
-    bool compare_seen = false;
-    bool verbose_seen = false;
-    bool csv_seen = false;
 
     for (int index = 1; index < argc; ++index) {
-        const std::string_view argument(argv[index]);
+        const std::string argument = argv[index];
         if (argument == "--predictor") {
             if (options.predictor_explicit) {
-                option_error("--predictor may only be specified once");
+                throw std::invalid_argument(
+                    "--predictor may only be specified once");
             }
             options.predictor = parse_predictor(
                 require_value(index, argc, argv, argument));
             options.predictor_explicit = true;
         } else if (argument == "--table-bits") {
             if (options.table_bits_explicit) {
-                option_error("--table-bits may only be specified once");
+                throw std::invalid_argument(
+                    "--table-bits may only be specified once");
             }
             options.table_bits = parse_unsigned(
                 require_value(index, argc, argv, argument), argument);
             options.table_bits_explicit = true;
         } else if (argument == "--history-bits") {
             if (options.history_bits_explicit) {
-                option_error("--history-bits may only be specified once");
+                throw std::invalid_argument(
+                    "--history-bits may only be specified once");
             }
             options.history_bits = parse_unsigned(
                 require_value(index, argc, argv, argument), argument);
             options.history_bits_explicit = true;
         } else if (argument == "--initial-state") {
             if (options.initial_state_explicit) {
-                option_error("--initial-state may only be specified once");
+                throw std::invalid_argument(
+                    "--initial-state may only be specified once");
             }
             options.initial_state = parse_initial_state(
                 require_value(index, argc, argv, argument));
             options.initial_state_explicit = true;
         } else if (argument == "--csv") {
-            if (csv_seen) {
-                option_error("--csv may only be specified once");
+            if (options.csv_requested) {
+                throw std::invalid_argument(
+                    "--csv may only be specified once");
             }
-            options.csv_path = std::string(
-                require_value(index, argc, argv, argument));
-            if (options.csv_path->empty()) {
-                option_error("--csv requires a non-empty path");
+            options.csv_path = require_value(index, argc, argv, argument);
+            if (options.csv_path.empty()) {
+                throw std::invalid_argument(
+                    "--csv requires a non-empty path");
             }
-            csv_seen = true;
+            options.csv_requested = true;
         } else if (argument == "--compare") {
-            if (compare_seen) {
-                option_error("--compare may only be specified once");
+            if (options.compare) {
+                throw std::invalid_argument(
+                    "--compare may only be specified once");
             }
             options.compare = true;
-            compare_seen = true;
         } else if (argument == "--verbose") {
-            if (verbose_seen) {
-                option_error("--verbose may only be specified once");
+            if (options.verbose) {
+                throw std::invalid_argument(
+                    "--verbose may only be specified once");
             }
             options.verbose = true;
-            verbose_seen = true;
         } else if (!argument.empty() && argument.front() == '-') {
-            option_error("unknown option '" + std::string(argument) + "'");
+            throw std::invalid_argument("unknown option '" + argument + "'");
         } else if (!options.trace_path.empty()) {
-            option_error("multiple trace files were provided");
+            throw std::invalid_argument(
+                "multiple trace files were provided");
         } else {
-            options.trace_path = std::string(argument);
+            options.trace_path = argument;
         }
     }
 
     if (options.trace_path.empty()) {
-        option_error("a trace file is required");
+        throw std::invalid_argument("a trace file is required");
     }
     if (options.compare && options.verbose) {
-        option_error("--compare cannot be combined with --verbose");
+        throw std::invalid_argument(
+            "--compare cannot be combined with --verbose");
     }
     if (options.compare && options.predictor_explicit) {
-        option_error("--compare cannot be combined with --predictor");
+        throw std::invalid_argument(
+            "--compare cannot be combined with --predictor");
     }
     if (options.table_bits > kMaximumTableBits) {
-        option_error("--table-bits must be between 0 and 24");
+        throw std::invalid_argument(
+            "--table-bits must be between 0 and 24");
     }
     if (options.history_bits == 0U ||
         options.history_bits > kMaximumHistoryBits) {
-        option_error("--history-bits must be between 1 and 63");
+        throw std::invalid_argument(
+            "--history-bits must be between 1 and 63");
     }
 
-    const bool selected_predictor_has_table =
-        options.predictor == PredictorKind::one_bit ||
+    bool selected_predictor_has_table = false;
+    if (options.predictor == PredictorKind::one_bit ||
         options.predictor == PredictorKind::two_bit ||
-        options.predictor == PredictorKind::gshare;
+        options.predictor == PredictorKind::gshare) {
+        selected_predictor_has_table = true;
+    }
+
     if (!options.compare && options.table_bits_explicit &&
         !selected_predictor_has_table) {
-        option_error("--table-bits is only valid for table-based predictors or --compare");
+        throw std::invalid_argument(
+            "--table-bits is only valid for table-based predictors or "
+            "--compare");
     }
     if (!options.compare && options.history_bits_explicit &&
         options.predictor != PredictorKind::gshare) {
-        option_error("--history-bits is only valid with gshare or --compare");
+        throw std::invalid_argument(
+            "--history-bits is only valid with gshare or --compare");
     }
     if (!options.compare && options.initial_state_explicit &&
         !selected_predictor_has_table) {
-        option_error("--initial-state is only valid for table-based predictors or --compare");
+        throw std::invalid_argument(
+            "--initial-state is only valid for table-based predictors or "
+            "--compare");
     }
 
     return options;
 }
 
 bool initial_one_bit_state(InitialState state) {
-    return state == InitialState::taken || state == InitialState::weakly_taken ||
-           state == InitialState::strongly_taken;
+    if (state == InitialState::taken) {
+        return true;
+    }
+    if (state == InitialState::weakly_taken) {
+        return true;
+    }
+    if (state == InitialState::strongly_taken) {
+        return true;
+    }
+    return false;
 }
 
 std::uint8_t initial_counter_state(InitialState state) {
@@ -309,66 +328,83 @@ std::string history_string(std::uint64_t history, unsigned bits) {
 }
 
 void print_summary(const SimulationResult& result, std::ostream& output) {
-    output << "Predictor: " << result.predictor << '\n'
-           << "Total branches: " << result.statistics.total() << '\n'
-           << "Taken branches: " << result.statistics.taken() << '\n'
-           << "Not-taken branches: " << result.statistics.not_taken() << '\n'
-           << "Correct predictions: " << result.statistics.correct() << '\n'
-           << "Incorrect predictions: " << result.statistics.incorrect() << '\n'
-           << std::fixed << std::setprecision(2)
-           << "Prediction accuracy: " << result.statistics.accuracy_percent()
-           << "%\n"
-           << "Misprediction rate: "
+    output << "Predictor: " << result.predictor << '\n';
+    output << "Total branches: " << result.statistics.total() << '\n';
+    output << "Taken branches: " << result.statistics.taken() << '\n';
+    output << "Not-taken branches: " << result.statistics.not_taken() << '\n';
+    output << "Correct predictions: " << result.statistics.correct() << '\n';
+    output << "Incorrect predictions: " << result.statistics.incorrect() << '\n';
+    output << std::fixed << std::setprecision(2);
+    output << "Prediction accuracy: "
+           << result.statistics.accuracy_percent() << "%\n";
+    output << "Misprediction rate: "
            << result.statistics.misprediction_rate_percent() << "%\n";
 
     if (result.table_entries.has_value()) {
         const std::size_t bytes = (result.table_memory_bits + 7U) / 8U;
-        output << "Table entries: " << *result.table_entries << '\n'
-               << "Table memory usage: " << result.table_memory_bits
-               << (result.table_memory_bits == 1U ? " bit (" : " bits (")
-               << bytes << (bytes == 1U ? " byte)\n" : " bytes)\n");
+
+        const char* bit_label = "bits";
+        if (result.table_memory_bits == 1U) {
+            bit_label = "bit";
+        }
+
+        const char* byte_label = "bytes";
+        if (bytes == 1U) {
+            byte_label = "byte";
+        }
+
+        output << "Table entries: " << *result.table_entries << '\n';
+        output << "Table memory usage: " << result.table_memory_bits << ' '
+               << bit_label << " (" << bytes << ' ' << byte_label << ")\n";
     }
+
     if (result.history_bits.has_value() && result.final_history.has_value()) {
-        output << "History bits: " << *result.history_bits << '\n'
-               << "Final global history: "
-               << history_string(*result.final_history, *result.history_bits)
-               << '\n';
+        const std::string final_history =
+            history_string(*result.final_history, *result.history_bits);
+        output << "History bits: " << *result.history_bits << '\n';
+        output << "Final global history: " << final_history << '\n';
     }
 }
 
 void print_comparison(const std::vector<SimulationResult>& results,
                       std::ostream& output) {
-    output << std::left << std::setw(22) << "Predictor" << std::right
-           << std::setw(12) << "Correct" << std::setw(14) << "Incorrect"
-           << std::setw(14) << "Accuracy" << '\n';
-    for (const auto& result : results) {
-        output << std::left << std::setw(22) << result.predictor << std::right
-               << std::setw(12) << result.statistics.correct()
-               << std::setw(14) << result.statistics.incorrect() << std::setw(13)
-               << std::fixed << std::setprecision(2)
-               << result.statistics.accuracy_percent() << "%\n";
+    output << std::left << std::setw(22) << "Predictor";
+    output << std::right << std::setw(12) << "Correct";
+    output << std::setw(14) << "Incorrect";
+    output << std::setw(14) << "Accuracy" << '\n';
+
+    for (const SimulationResult& result : results) {
+        output << std::left << std::setw(22) << result.predictor;
+        output << std::right << std::setw(12)
+               << result.statistics.correct();
+        output << std::setw(14) << result.statistics.incorrect();
+        output << std::setw(13) << std::fixed << std::setprecision(2)
+               << result.statistics.accuracy_percent();
+        output << "%\n";
     }
 }
 
 void validate_csv_destination(const std::string& trace_path,
                               const std::string& csv_path) {
-    namespace fs = std::filesystem;
-
     std::error_code trace_canonical_error;
     std::error_code csv_canonical_error;
-    const fs::path canonical_trace =
-        fs::weakly_canonical(trace_path, trace_canonical_error);
-    const fs::path canonical_csv =
-        fs::weakly_canonical(csv_path, csv_canonical_error);
+    const std::filesystem::path canonical_trace =
+        std::filesystem::weakly_canonical(trace_path, trace_canonical_error);
+    const std::filesystem::path canonical_csv =
+        std::filesystem::weakly_canonical(csv_path, csv_canonical_error);
+
     if (!trace_canonical_error && !csv_canonical_error &&
         canonical_trace == canonical_csv) {
-        option_error("CSV output must not overwrite the input trace");
+        throw std::invalid_argument(
+            "CSV output must not overwrite the input trace");
     }
 
     std::error_code equivalent_error;
-    if (fs::equivalent(trace_path, csv_path, equivalent_error) &&
-        !equivalent_error) {
-        option_error("CSV output must not overwrite the input trace");
+    const bool same_file =
+        std::filesystem::equivalent(trace_path, csv_path, equivalent_error);
+    if (!equivalent_error && same_file) {
+        throw std::invalid_argument(
+            "CSV output must not overwrite the input trace");
     }
 }
 
@@ -381,12 +417,13 @@ void write_csv(const std::string& path,
 
     output << "predictor,total,correct,incorrect,accuracy,misprediction_rate\n";
     output << std::fixed << std::setprecision(2);
-    for (const auto& result : results) {
-        output << result.predictor << ',' << result.statistics.total() << ','
-               << result.statistics.correct() << ','
-               << result.statistics.incorrect() << ','
-               << result.statistics.accuracy_percent() << ','
-               << result.statistics.misprediction_rate_percent() << '\n';
+    for (const SimulationResult& result : results) {
+        output << result.predictor << ',';
+        output << result.statistics.total() << ',';
+        output << result.statistics.correct() << ',';
+        output << result.statistics.incorrect() << ',';
+        output << result.statistics.accuracy_percent() << ',';
+        output << result.statistics.misprediction_rate_percent() << '\n';
     }
     output.flush();
     if (!output) {
@@ -399,19 +436,27 @@ std::vector<SimulationResult> run_simulations(const Options& options) {
     std::vector<SimulationResult> results;
 
     if (options.compare) {
-        constexpr std::array<PredictorKind, 5> kinds{
+        const PredictorKind kinds[] = {
             PredictorKind::always_taken, PredictorKind::always_not_taken,
             PredictorKind::one_bit, PredictorKind::two_bit,
-            PredictorKind::gshare};
-        results.reserve(kinds.size());
-        for (const PredictorKind kind : kinds) {
+            PredictorKind::gshare
+        };
+
+        for (PredictorKind kind : kinds) {
             Simulator simulator(make_predictor(kind, options));
-            results.push_back(simulator.run(trace));
+            const SimulationResult result = simulator.run(trace);
+            results.push_back(result);
         }
     } else {
         Simulator simulator(make_predictor(options.predictor, options));
-        std::ostream* verbose_output = options.verbose ? &std::cout : nullptr;
-        results.push_back(simulator.run(trace, verbose_output));
+        std::ostream* verbose_output = nullptr;
+        if (options.verbose) {
+            verbose_output = &std::cout;
+        }
+
+        const SimulationResult result =
+            simulator.run(trace, verbose_output);
+        results.push_back(result);
     }
     return results;
 }
@@ -423,7 +468,8 @@ int main(int argc, char* argv[]) {
     using namespace branchsim;
 
     for (int index = 1; index < argc; ++index) {
-        if (std::string_view(argv[index]) == "--help") {
+        const std::string argument = argv[index];
+        if (argument == "--help") {
             print_help(std::cout);
             return 0;
         }
@@ -431,14 +477,16 @@ int main(int argc, char* argv[]) {
 
     try {
         const Options options = parse_options(argc, argv);
-        if (options.csv_path.has_value()) {
-            validate_csv_destination(options.trace_path, *options.csv_path);
+        if (options.csv_requested) {
+            validate_csv_destination(options.trace_path, options.csv_path);
         }
+
         const std::vector<SimulationResult> results = run_simulations(options);
 
-        if (options.csv_path.has_value()) {
-            write_csv(*options.csv_path, results);
+        if (options.csv_requested) {
+            write_csv(options.csv_path, results);
         }
+
         if (options.compare) {
             print_comparison(results, std::cout);
         } else {
@@ -446,8 +494,8 @@ int main(int argc, char* argv[]) {
         }
         return 0;
     } catch (const std::exception& error) {
-        std::cerr << "Error: " << error.what() << '\n'
-                  << "Try 'branchsim --help' for usage.\n";
+        std::cerr << "Error: " << error.what() << '\n';
+        std::cerr << "Try 'branchsim --help' for usage.\n";
         return 1;
     }
 }

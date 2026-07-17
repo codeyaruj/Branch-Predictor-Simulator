@@ -31,16 +31,20 @@ double Statistics::accuracy_percent() const noexcept {
     if (total_ == 0U) {
         return 0.0;
     }
-    return static_cast<double>(correct_) * 100.0 /
-           static_cast<double>(total_);
+
+    const double correct = static_cast<double>(correct_);
+    const double total = static_cast<double>(total_);
+    return correct * 100.0 / total;
 }
 
 double Statistics::misprediction_rate_percent() const noexcept {
     if (total_ == 0U) {
         return 0.0;
     }
-    return static_cast<double>(incorrect_) * 100.0 /
-           static_cast<double>(total_);
+
+    const double incorrect = static_cast<double>(incorrect_);
+    const double total = static_cast<double>(total_);
+    return incorrect * 100.0 / total;
 }
 
 }  // namespace branchsim

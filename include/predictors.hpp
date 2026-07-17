@@ -39,7 +39,7 @@ private:
     [[nodiscard]] std::size_t index_for(std::uint64_t pc) const;
 
     std::vector<std::uint8_t> table_;
-    std::uint64_t index_mask_;
+    std::uint64_t index_mask_{0U};
 };
 
 class TwoBitPredictor final : public BranchPredictor {
@@ -57,7 +57,7 @@ private:
     [[nodiscard]] std::size_t index_for(std::uint64_t pc) const;
 
     std::vector<std::uint8_t> table_;
-    std::uint64_t index_mask_;
+    std::uint64_t index_mask_{0U};
 };
 
 class GSharePredictor final : public BranchPredictor {
@@ -77,10 +77,10 @@ private:
     [[nodiscard]] std::size_t index_for(std::uint64_t pc) const;
 
     std::vector<std::uint8_t> table_;
-    std::uint64_t index_mask_;
-    std::uint64_t history_mask_;
+    std::uint64_t index_mask_{0U};
+    std::uint64_t history_mask_{0U};
     std::uint64_t global_history_{0U};
-    unsigned history_bits_;
+    unsigned history_bits_{0U};
 };
 
 }  // namespace branchsim
